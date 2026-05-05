@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Net;
 using System.Net.Http.Json;
@@ -5,8 +6,10 @@ using System.Net.Mime;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Jellyfin.Api.Auth;
 using Jellyfin.Api.Models;
 using Jellyfin.Extensions.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Jellyfin.Server.Integration.Tests.Controllers
@@ -23,9 +26,49 @@ namespace Jellyfin.Server.Integration.Tests.Controllers
         }
 
         [Fact]
+        public async Task GetDashboardConfigurationPage_Unauthenticated_Unauthorized()
+        {
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync("web/ConfigurationPage?name=TestPlugin", TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetDashboardConfigurationPage_InvalidPageToken_Unauthorized()
+        {
+            var client = _factory.CreateClient();
+
+            var response = await client.GetAsync(
+                "web/ConfigurationPage?name=TestPlugin&page_token=not-a-real-token",
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task GetDashboardConfigurationPage_ValidPageToken_Ok()
+        {
+            // Mint a token via the same service the controller uses, then call
+            // the endpoint anonymously with it - this is the path browser-driven
+            // sub-resource fetches (script/link/img/dynamic import) take.
+            var tokenService = _factory.Services.GetRequiredService<IPluginPageTokenService>();
+            var token = tokenService.Issue(TimeSpan.FromMinutes(1));
+
+            var client = _factory.CreateClient();
+            var response = await client.GetAsync(
+                "web/ConfigurationPage?name=TestPlugin&page_token=" + token,
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        [Fact]
         public async Task GetDashboardConfigurationPage_NonExistingPage_NotFound()
         {
             var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.AddAuthHeader(_accessToken ??= await AuthHelper.CompleteStartupAsync(client));
 
             var response = await client.GetAsync("web/ConfigurationPage?name=ThisPageDoesntExists", TestContext.Current.CancellationToken);
 
@@ -36,6 +79,7 @@ namespace Jellyfin.Server.Integration.Tests.Controllers
         public async Task GetDashboardConfigurationPage_ExistingPage_CorrectPage()
         {
             var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.AddAuthHeader(_accessToken ??= await AuthHelper.CompleteStartupAsync(client));
 
             var response = await client.GetAsync("/web/ConfigurationPage?name=TestPlugin", TestContext.Current.CancellationToken);
 
@@ -49,6 +93,7 @@ namespace Jellyfin.Server.Integration.Tests.Controllers
         public async Task GetDashboardConfigurationPage_BrokenPage_NotFound()
         {
             var client = _factory.CreateClient();
+            client.DefaultRequestHeaders.AddAuthHeader(_accessToken ??= await AuthHelper.CompleteStartupAsync(client));
 
             var response = await client.GetAsync("/web/ConfigurationPage?name=BrokenPage", TestContext.Current.CancellationToken);
 
